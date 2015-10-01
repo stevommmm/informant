@@ -3,7 +3,7 @@
 from informant import engine
 
 # Import all our modules from /getters/
-from getters import *
+from modules import *
 
 # Get a new instance of our application framework
 app = engine()

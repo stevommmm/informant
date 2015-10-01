@@ -1,6 +1,7 @@
 import cgi
 import json
 import logging
+import operator
 import re
 import urlparse
 logging.basicConfig(format='%(process)-6d %(levelname)-8s %(message)s', level=logging.DEBUG)
@@ -22,11 +23,22 @@ class __Route(object):
 			self.path = path
 		else:
 			self.path = '/' + '/'.join(['api', version, path.lstrip('/')])
+		self.priority = 10
 
 	def __eq__(self, *args):
 		return False
 
+	def __lt__(self, other_route):
+		return self.priority < other_route.priority
+
+	def __gt__(self, other_route):
+		return self.priority > other_route.priority
+
 class StringRoute(__Route):
+	def __init__(self, path, **kwargs):
+		super(StringRoute, self).__init__(path, **kwargs)
+		self.priority = 1
+
 	def __eq__(self, wsgi_path):
 		return self.path == wsgi_path
 
@@ -35,6 +47,7 @@ class RegexRoute(__Route):
 		super(RegexRoute, self).__init__(path, **kwargs)
 		self.path = "^" + self.path
 		self.regex = re.compile(self.path)
+		self.priority = 14
 
 	def __eq__(self, wsgi_path):
 		return self.regex.match(wsgi_path)
@@ -73,7 +86,7 @@ class Engine(object):
 			self.routes = []
 
 	def register(self, path_handler, handler=None):
-		'''Route decorator, @application_instance.route('^regex$')'''
+		'''Route decorator, @application_instance.register(..)'''
 
 		def wrapper(handler):
 			func_handler = path_handler
@@ -83,10 +96,9 @@ class Engine(object):
 
 			logger.info("Registered route %s to %s", func_handler.path, handler.__name__)
 			
-			if isinstance(func_handler, RegexRoute): # We want more specific string routes before globbing regex
-				self.routes.append((func_handler, handler()))
-			else:
-				self.routes.insert(0, (func_handler, handler()))
+			self.routes.append((func_handler, handler()))
+
+			self.routes = sorted(self.routes, key=operator.itemgetter(0))
 		return wrapper
 
 	def wsgi(self, environ, start_response):
@@ -135,7 +147,7 @@ class Engine(object):
 		try:
 			srv.serve_forever()
 		except KeyboardInterrupt:
-			print "Got CTRL + C. Sent shutdown to server."
+			logger.critical("Got CTRL + C. Sent shutdown to server.")
 
 
 if __name__ == '__main__':

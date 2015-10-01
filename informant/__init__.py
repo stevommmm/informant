@@ -155,5 +155,5 @@ if __name__ == '__main__':
 	@app.register(StringRoute('/'))
 	class IndexRoute(object):
 		def do_GET(self, request):
-			return '<h1>Working!</h1>'
+			return {'status': 'working'}
 	app.run()

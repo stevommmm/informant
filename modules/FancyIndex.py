@@ -1,11 +1,11 @@
 
 import json
 from collections import OrderedDict
-from informant import engine, __author__, __description__, __version__
+from informant import Engine, StringRoute, __author__, __description__, __version__
 
-app = engine()
+app = Engine()
 
-@app.route('^/$')
+@app.register(StringRoute('/', notAPI=True))
 class WebIndexRoute(object):
 	def get_class_routes(self, cl):
 		"""Iterate over a classes defined methods and return any starting with do_"""
@@ -14,12 +14,13 @@ class WebIndexRoute(object):
 				yield key[3:]
 
 	def iterroutes(self):
-		routes = {}
-		for route in app.routes.items():
-			routes[route[0].pattern] = {
+		routes = []
+		for route in app.routes:
+			routes.append({
+				'path': route[0].path,
 				'handler': route[1].__class__.__name__,
 				'methods': list(self.get_class_routes(route[1])),
-			}
+			})
 		return routes
 
 
@@ -39,7 +40,7 @@ def pretty_html_print(rawdict):
 		from pygments.lexers import JsonLexer
 		from pygments.formatters import HtmlFormatter
 
-		formatter = HtmlFormatter(full=True) #noclasses=True, 
+		formatter = HtmlFormatter(full=True) 
 		return highlight(json.dumps(rawdict, indent=4), JsonLexer(), formatter)
 	except ImportError:
 		return '<pre>' + json.dumps(rawdict, indent=4) + "</pre>"

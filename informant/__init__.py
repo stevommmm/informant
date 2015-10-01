@@ -1,7 +1,8 @@
+import cgi
+import json
+import logging
 import re
 import urlparse
-import cgi
-import logging
 logging.basicConfig(format='%(process)-6d %(levelname)-8s %(message)s', level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
@@ -15,10 +16,32 @@ def filter_by_list(fdict, flist):
 		return key[0] in flist
 	return dict(filter(inner, fdict.items()))
 
-class request(dict):
-	def __init__(self, environ, re_args):
-		self.args = re_args
-		self.headers = [('content-type', 'text/html')]
+class __Route(object):
+	def __init__(self, path, version="v1", notAPI=False):
+		if notAPI:
+			self.path = path
+		else:
+			self.path = '/' + '/'.join(['api', version, path.lstrip('/')])
+
+	def __eq__(self, *args):
+		return False
+
+class StringRoute(__Route):
+	def __eq__(self, wsgi_path):
+		return self.path == wsgi_path
+
+class RegexRoute(__Route):
+	def __init__(self, path, **kwargs):
+		super(RegexRoute, self).__init__(path, **kwargs)
+		self.path = "^" + self.path
+		self.regex = re.compile(self.path)
+
+	def __eq__(self, wsgi_path):
+		return self.regex.match(wsgi_path)
+
+class Request(object):
+	def __init__(self, environ):
+		self.headers = {'content-type': 'text/html'}
 		self.status = '200 OK'
 		self.method = environ['REQUEST_METHOD']
 		self._ENV = environ
@@ -28,6 +51,9 @@ class request(dict):
 	def set_status(self, status):
 		self.status = status
 
+	def set_header(self, header, value):
+		self.headers.update({header: value})
+
 	def __split_get(self):
 		return urlparse.parse_qs(self._ENV.get('QUERY_STRING', ''), keep_blank_values=True)
 
@@ -35,54 +61,60 @@ class request(dict):
 		safe_env = filter_by_list(self._ENV, ['CONTENT_LENGTH', 'CONTENT_TYPE', 'REQUEST_METHOD'])
 		return cgi.FieldStorage(fp=self._ENV['wsgi.input'], environ=safe_env, keep_blank_values=1)
 
-class engine(object):
+class Engine(object):
 	_instance = None
 	def __new__(cls, *args, **kwargs):
 		if not cls._instance:
-			cls._instance = super(engine, cls).__new__(cls, *args, **kwargs)
+			cls._instance = super(Engine, cls).__new__(cls, *args, **kwargs)
 		return cls._instance
 
 	def __init__(self):
 		if not hasattr(self, 'routes'):
-			self.routes = {}
+			self.routes = []
 
-	def route(self, path_pattern, handler=None):
+	def register(self, path_handler, handler=None):
 		'''Route decorator, @application_instance.route('^regex$')'''
+
 		def wrapper(handler):
-			logger.info("Registered route %s to %s", path_pattern, handler.__name__)
-			self.routes[re.compile(path_pattern)] = handler()
+			func_handler = path_handler
+
+			if isinstance(path_handler, str):
+				func_handler = StringRoute(path_handler)
+
+			logger.info("Registered route %s to %s", func_handler.path, handler.__name__)
+			
+			if isinstance(func_handler, RegexRoute): # We want more specific string routes before globbing regex
+				self.routes.append((func_handler, handler()))
+			else:
+				self.routes.insert(0, (func_handler, handler()))
 		return wrapper
 
 	def wsgi(self, environ, start_response):
 		'''WSGI compliant callable, only ever called from __call__'''
-		def _fmt_grps(reg_search):
-			f = reg_search.groupdict()
-			if not f:
-				f = reg_search.groups()
-			return f
 
 		path = environ['PATH_INFO']
 	
-		for reg_path in self.routes.items():
-			reg_search = reg_path[0].match(path)
-			if reg_search:
+		for path_handler in self.routes:
+			if path_handler[0] == path:
 				try:
-					handler = reg_path[1]
-					req = request(environ, _fmt_grps(reg_search))
+					handler = path_handler[1]
+					req = Request(environ)
 
 					if hasattr(handler, 'do_' + req.method):
 						func_output = getattr(handler, 'do_' + req.method)(req)
 					else:
 						start_response('405 Method Not Allowed', [('content-type', 'text/html')])
-						return ('Method Not Allowed',)
+						return (repr(req.method) + ' Method Not Allowed',)
 
-			
-					if type(func_output) == list:
+					if type(func_output) == dict:
+						func_output = json.dumps(func_output)
+						req.set_header('content-type', 'application/json')
+					elif type(func_output) == list:
 						func_output = ''.join(func_output)
-					if type(func_output) == unicode:
+					elif type(func_output) == unicode:
 						func_output = func_output.encode('utf8')
 
-					start_response(req.status, req.headers)
+					start_response(req.status, req.headers.items())
 					return func_output
 				except Exception as e:
 					import traceback
@@ -107,8 +139,8 @@ class engine(object):
 
 
 if __name__ == '__main__':
-	app = engine()
-	@app.route('^/$')
+	app = Engine()
+	@app.register(StringRoute('/'))
 	class IndexRoute(object):
 		def do_GET(self, request):
 			return '<h1>Working!</h1>'

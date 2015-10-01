@@ -31,7 +31,7 @@ Each routing method has a different performance characteristic, the below tests 
 
 *Siege test for StringRoute*
 
-	smcgregor@smcgregor-kitn:~/Documents/informant$ siege -c100 -t1m http://localhost:8000/api/v1/test
+	$ siege -c100 -t1m http://localhost:8000/api/v1/test
 		** SIEGE 3.0.5
 		** Preparing 100 concurrent users for battle.
 		The server is now under siege...
